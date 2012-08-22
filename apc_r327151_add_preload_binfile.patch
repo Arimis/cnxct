@@ -1,0 +1,116 @@
+diff -ur trunk/apc_globals.h preload_binfile_apc/apc_globals.h
+--- trunk/apc_globals.h	2012-08-22 14:05:31.770664450 +0800
++++ preload_binfile_apc/apc_globals.h	2012-08-22 17:24:44.218929191 +0800
+@@ -110,6 +110,8 @@
+     zend_bool coredump_unmap;    /* Trap signals that coredump and unmap shared memory */
+     apc_cache_t *current_cache;  /* current cache being modified/read */
+     char *preload_path;
++    char *preload_binfile;       /* path of preload binfile */
++    zend_bool apc_preload_ok;    /* true if binfile was loaded */
+     zend_bool file_md5;           /* record md5 hash of files */
+     void *apc_bd_alloc_ptr;      /* bindump alloc() ptr */
+     void *apc_bd_alloc_ubptr;    /* bindump alloc() upper bound ptr */
+diff -ur trunk/apc_main.c preload_binfile_apc/apc_main.c
+--- trunk/apc_main.c	2012-08-22 14:05:31.734665759 +0800
++++ preload_binfile_apc/apc_main.c	2012-08-22 17:24:44.214929191 +0800
+@@ -46,6 +46,9 @@
+ #include "php_scandir.h"
+ #include "ext/standard/php_var.h"
+ #include "ext/standard/md5.h"
++#include "ext/standard/file.h"
++#include "ext/standard/info.h"
++#include "apc_bin.h"
+ 
+ #define APC_MAX_SERIALIZERS 16
+ 
+@@ -743,6 +746,52 @@
+ 
+     apc_walk_dir(APCG(preload_path) TSRMLS_CC);
+ }
++
++/* 2012/8/20 CFC4N function of preload binfile start */
++static int apc_load_file(char *filename TSRMLS_DC)
++{
++    zval *zcontext = NULL;
++    long flags = 0;
++    php_stream_context *context = NULL;
++    php_stream *stream;
++    char *data;
++    int len;
++
++    context = php_stream_context_from_zval(zcontext, 0);
++    stream = php_stream_open_wrapper_ex(filename, "rb", ENFORCE_SAFE_MODE | REPORT_ERRORS, NULL, context);
++    if (!stream) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unable to preload from binfile: %s\n", filename);  // E_WARNING OR E_ERROR ?
++        return -1;
++    }
++    len = php_stream_copy_to_mem(stream, &data, PHP_STREAM_COPY_ALL, 0);
++    if(len == 0) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "File passed to apc_load_file was empty: %s\n", filename);
++        return -1;
++    } else if(len < 0) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error reading file passed to apc_load_file: %s\n", filename);
++        return -1;
++    } else if(len != ((apc_bd_t*)data)->size) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "file passed to apc_load_file does not appear to be valid due to size (%d vs expected %d).\n", len, ((apc_bd_t*)data)->size -1);
++        return -1;
++    }
++    php_stream_close(stream);
++
++    apc_bin_load((apc_bd_t*)data, (int)flags TSRMLS_CC);
++    efree(data);
++    APCG(apc_preload_ok) = 1;   /* set true when binfile loaded */
++    return 0;
++}
++
++void apc_file_preload(TSRMLS_D)
++{
++    if(!APCG(preload_binfile)) return;
++    if (APCG(apc_preload_ok))
++    {
++        return;
++    }
++    apc_load_file(APCG(preload_binfile) TSRMLS_CC);
++}
++/* 2012/8/20 CFC4N function of preload binfile end */
+ /* }}} */
+ 
+ /* {{{ apc_serializer hooks */
+@@ -1021,7 +1070,8 @@
+     ALLOC_INIT_ZVAL(APCG(filehits));
+     array_init(APCG(filehits));
+ #endif
+-
++    /* load binfile now */
++    apc_file_preload(TSRMLS_C);
+     return 0;
+ }
+ 
+diff -ur trunk/php_apc.c preload_binfile_apc/php_apc.c
+--- trunk/php_apc.c	2012-08-22 14:05:31.786664540 +0800
++++ preload_binfile_apc/php_apc.c	2012-08-22 17:24:44.222929191 +0800
+@@ -109,6 +109,8 @@
+     apc_globals->lazy_function_table = NULL;
+     apc_globals->serializer_name = NULL;
+     apc_globals->serializer = NULL;
++    apc_globals->preload_binfile = NULL;
++    apc_globals->apc_preload_ok = 0;
+ }
+ 
+ static void php_apc_shutdown_globals(zend_apc_globals* apc_globals TSRMLS_DC)
+@@ -275,6 +277,7 @@
+ STD_PHP_INI_BOOLEAN("apc.lazy_functions", "0", PHP_INI_SYSTEM, OnUpdateBool, lazy_functions, zend_apc_globals, apc_globals)
+ STD_PHP_INI_BOOLEAN("apc.lazy_classes", "0", PHP_INI_SYSTEM, OnUpdateBool, lazy_classes, zend_apc_globals, apc_globals)
+ STD_PHP_INI_ENTRY("apc.serializer", "default", PHP_INI_SYSTEM, OnUpdateStringUnempty, serializer_name, zend_apc_globals, apc_globals)
++STD_PHP_INI_ENTRY("apc.preload_binfile", (char*)NULL, PHP_INI_SYSTEM, OnUpdateString, preload_binfile, zend_apc_globals, apc_globals)
+ PHP_INI_END()
+ 
+ /* }}} */
+@@ -466,6 +469,7 @@
+         }
+     }
+     apc_cache_clear(apc_cache TSRMLS_CC);
++    APCG(apc_preload_ok) = 0;    /* set false when apc_clear_cache called */
+     RETURN_TRUE;
+ }
+ /* }}} */
