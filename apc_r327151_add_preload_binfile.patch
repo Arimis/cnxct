@@ -80,7 +80,7 @@ diff -ur trunk/apc_main.c preload_binfile_apc/apc_main.c
      ALLOC_INIT_ZVAL(APCG(filehits));
      array_init(APCG(filehits));
  #endif
--
+
 +    /* load binfile now */
 +    apc_file_preload(TSRMLS_C);
      return 0;
