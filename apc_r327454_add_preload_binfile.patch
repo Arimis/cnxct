@@ -1,0 +1,129 @@
+diff -ur trunk/apc_cache.c preload_binfile_apc/apc_cache.c
+--- trunk/apc_cache.c	2012-09-06 18:33:49.146960233 +0800
++++ preload_binfile_apc/apc_cache.c	2012-09-06 18:46:06.522975155 +0800
+@@ -350,6 +350,7 @@
+     memset(&cache->header->lastkey, 0, sizeof(apc_keyid_t));
+ 
+     cache->header->busy = 0;
++	cache->header->preload_binfile_done = 0;
+     CACHE_UNLOCK(cache);
+ }
+ /* }}} */
+diff -ur trunk/apc_cache.h preload_binfile_apc/apc_cache.h
+--- trunk/apc_cache.h	2012-09-06 18:33:49.146960233 +0800
++++ preload_binfile_apc/apc_cache.h	2012-09-06 18:46:06.522975155 +0800
+@@ -327,6 +327,7 @@
+     int num_entries;            /* Statistic on the number of entries */
+     size_t mem_size;            /* Statistic on the memory size used by this cache */
+     apc_keyid_t lastkey;        /* the key that is being inserted (user cache) */
++	zend_bool preload_binfile_done;			/* flag to file preload  */
+ };
+ /* }}} */
+ 
+diff -ur trunk/apc_globals.h preload_binfile_apc/apc_globals.h
+--- trunk/apc_globals.h	2012-09-06 18:33:49.138960230 +0800
++++ preload_binfile_apc/apc_globals.h	2012-09-06 18:46:06.530975154 +0800
+@@ -110,6 +110,7 @@
+     zend_bool coredump_unmap;    /* Trap signals that coredump and unmap shared memory */
+     apc_cache_t *current_cache;  /* current cache being modified/read */
+     char *preload_path;
++	char *preload_binfile;       /* path of preload binfile */
+     zend_bool file_md5;           /* record md5 hash of files */
+     void *apc_bd_alloc_ptr;      /* bindump alloc() ptr */
+     void *apc_bd_alloc_ubptr;    /* bindump alloc() upper bound ptr */
+diff -ur trunk/apc_main.c preload_binfile_apc/apc_main.c
+--- trunk/apc_main.c	2012-09-06 18:33:49.126960235 +0800
++++ preload_binfile_apc/apc_main.c	2012-09-06 18:46:06.526975154 +0800
+@@ -46,6 +46,9 @@
+ #include "php_scandir.h"
+ #include "ext/standard/php_var.h"
+ #include "ext/standard/md5.h"
++#include "ext/standard/file.h"
++#include "ext/standard/info.h"
++#include "apc_bin.h"
+ 
+ #define APC_MAX_SERIALIZERS 16
+ 
+@@ -743,6 +746,54 @@
+ 
+     apc_walk_dir(APCG(preload_path) TSRMLS_CC);
+ }
++
++/* 2012/09/06 CFC4N function of preload binfile start */
++static int apc_load_file(char *filename TSRMLS_DC)
++{
++    zval *zcontext = NULL;
++    long flags = 0;
++    php_stream_context *context = NULL;
++    php_stream *stream;
++    char *data;
++    int len;
++
++    context = php_stream_context_from_zval(zcontext, 0);
++    stream = php_stream_open_wrapper_ex(filename, "rb", ENFORCE_SAFE_MODE | REPORT_ERRORS, NULL, context);
++    if (!stream) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unable to preload from binfile: %s\n", filename);  // E_WARNING OR E_ERROR ?
++        return -1;
++    }
++    len = php_stream_copy_to_mem(stream, &data, PHP_STREAM_COPY_ALL, 0);
++    if(len == 0) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "File passed to apc_load_file was empty: %s\n", filename);
++        return -1;
++    } else if(len < 0) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error reading file passed to apc_load_file: %s\n", filename);
++        return -1;
++    } else if(len != ((apc_bd_t*)data)->size) {
++        php_error_docref(NULL TSRMLS_CC, E_WARNING, "file passed to apc_load_file does not appear to be valid due to size (%d vs expected %d).\n", len, ((apc_bd_t*)data)->size -1);
++        return -1;
++    }
++    php_stream_close(stream);
++
++    apc_bin_load((apc_bd_t*)data, (int)flags TSRMLS_CC);
++    efree(data);
++	CACHE_LOCK(apc_cache);
++    apc_cache->header->preload_binfile_done = 1;   /* set true when binfile loaded */
++	CACHE_UNLOCK(apc_cache);
++    return 0;
++}
++
++void apc_file_preload(TSRMLS_D)
++{
++    if(!APCG(preload_binfile)) return;
++    if (apc_cache->header->preload_binfile_done)
++    {
++        return;
++    }
++    apc_load_file(APCG(preload_binfile) TSRMLS_CC);
++}
++/* 2012/09/06 CFC4N function of preload binfile end */
+ /* }}} */
+ 
+ /* {{{ apc_serializer hooks */
+@@ -1021,6 +1072,8 @@
+     ALLOC_INIT_ZVAL(APCG(filehits));
+     array_init(APCG(filehits));
+ #endif
++	/* load binfile now */
++	apc_file_preload(TSRMLS_C);
+ 
+     return 0;
+ }
+diff -ur trunk/php_apc.c preload_binfile_apc/php_apc.c
+--- trunk/php_apc.c	2012-09-06 18:33:49.142960231 +0800
++++ preload_binfile_apc/php_apc.c	2012-09-06 18:46:06.518975155 +0800
+@@ -104,6 +104,7 @@
+     apc_globals->force_file_update = 0;
+     apc_globals->coredump_unmap = 0;
+     apc_globals->preload_path = NULL;
++	apc_globals->preload_binfile = NULL;
+     apc_globals->use_request_time = 1;
+     apc_globals->lazy_class_table = NULL;
+     apc_globals->lazy_function_table = NULL;
+@@ -270,6 +271,7 @@
+ #endif
+ STD_PHP_INI_BOOLEAN("apc.coredump_unmap", "0", PHP_INI_SYSTEM, OnUpdateBool, coredump_unmap, zend_apc_globals, apc_globals)
+ STD_PHP_INI_ENTRY("apc.preload_path", (char*)NULL,              PHP_INI_SYSTEM, OnUpdateString,       preload_path,  zend_apc_globals, apc_globals)
++STD_PHP_INI_ENTRY("apc.preload_binfile", (char*)NULL, PHP_INI_SYSTEM, OnUpdateString, preload_binfile, zend_apc_globals, apc_globals)
+ STD_PHP_INI_BOOLEAN("apc.file_md5", "0", PHP_INI_SYSTEM, OnUpdateBool, file_md5,  zend_apc_globals, apc_globals)
+ STD_PHP_INI_BOOLEAN("apc.use_request_time", "1", PHP_INI_ALL, OnUpdateBool, use_request_time,  zend_apc_globals, apc_globals)
+ STD_PHP_INI_BOOLEAN("apc.lazy_functions", "0", PHP_INI_SYSTEM, OnUpdateBool, lazy_functions, zend_apc_globals, apc_globals)
