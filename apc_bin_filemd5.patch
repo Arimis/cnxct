@@ -1,0 +1,36 @@
+diff -ur trunk/apc_bin.c trunk_md5/apc_bin.c
+--- trunk/apc_bin.c	2012-11-12 16:01:16.601133187 +0800
++++ trunk_md5/apc_bin.c	2012-11-12 16:03:12.753132778 +0800
+@@ -790,6 +790,9 @@
+                     ep->type = sp->key.type;
+                     ep->val.file.filename = apc_bd_alloc(strlen(sp->value->data.file.filename) + 1 TSRMLS_CC);
+                     strcpy(ep->val.file.filename, sp->value->data.file.filename);
++                    if (APCG(file_md5)) {
++                        memcpy(ep->val.file.md5,sp->key.md5,16);
++                    }
+                     ep->val.file.op_array = apc_copy_op_array(NULL, sp->value->data.file.op_array, &ctxt TSRMLS_CC);
+ 
+                     for(ep->num_functions=0; sp->value->data.file.functions[ep->num_functions].function != NULL;) { ep->num_functions++; }
+@@ -982,6 +985,11 @@
+                     goto failure;
+                 }
+ 
++                 if (APCG(file_md5))
++                {
++                    memcpy(cache_key.md5, ep->val.file.md5, 16);
++                }
++
+                 if ((ret = apc_cache_insert(apc_cache, cache_key, cache_entry, &ctxt, t TSRMLS_CC)) != 1) {
+                     if(ret==-1) {
+                         goto failure;
+diff -ur trunk/apc_cache.h trunk_md5/apc_cache.h
+--- trunk/apc_cache.h	2012-11-12 16:01:16.613133187 +0800
++++ trunk_md5/apc_cache.h	2012-11-12 16:02:17.609132834 +0800
+@@ -129,6 +129,7 @@
+ typedef union _apc_cache_entry_value_t {
+     struct {
+         char *filename;             /* absolute path to source file */
++        unsigned char md5[16];      /* md5 hash of this file */
+         zend_op_array* op_array;    /* op_array allocated in shared memory */
+         apc_function_t* functions;  /* array of apc_function_t's */
+         apc_class_t* classes;       /* array of apc_class_t's */
