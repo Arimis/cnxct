@@ -2,9 +2,9 @@
 /*
  **  说明：此文件为apc导出文件，只需要在导出服存在。在生产服务器只需要bin文件，即可。
  **  需要保证导出服务器的web路径跟目标运行服务器的web路径一致
- **  导出：要确认 wwwroot同级目录下，存在bin目录，之后，执行此文件(放在tool目录下)，出现“Apc cache done!”即视为成功，之后将bin文件以及其他所有文件(多数已经被清空)复制到目标服务器。
+ **  导出：将此文件防项目路径的根目录下，执行此文件，出现“Apc cache done!”即视为成功，之后将dumproot目录下所有文件(多数已经被清空)复制到目标服务器。
  **  导入：在php.ini中新增apc.preload_binfile="/data/xyws.bin" 即可
- **  AUthor CFC4N cfc4n@cnxct.com $Id: apc_dump.php 2414 2012-11-16 06:43:52Z cfc4n $
+ **  AUthor CFC4N cfc4n@cnxct.com $Id: apc_dump.php 2449 2012-11-23 05:16:41Z cfc4n $
  */
 if (php_sapi_name() == 'cli')
 {
@@ -14,21 +14,22 @@ else
 {
     define('NEWLINE','<br />');
 }
-define('PROJECTROOT',substr(dirname(__FILE__), 0, -13));
+define('PROJECTROOT',dirname(__FILE__));    //define('PROJECTROOT','/data/htdocs');
 
 
 /* 定义项目主路径信息 */
 define('SYSTEMROOT',PROJECTROOT.DIRECTORY_SEPARATOR.'system');
 define('WWWROOT',PROJECTROOT.DIRECTORY_SEPARATOR.'wwwroot');
 define('SERVERROOT',PROJECTROOT.DIRECTORY_SEPARATOR.'server');
-define('APCBIN',PROJECTROOT.DIRECTORY_SEPARATOR.'bin');
+define('COREROOT',PROJECTROOT.DIRECTORY_SEPARATOR.'core');
+define('DUMPROOT',PROJECTROOT.DIRECTORY_SEPARATOR.'dumproot');
+define('APCBIN',DUMPROOT.DIRECTORY_SEPARATOR.'bin');
 define('BINNAME','xyws.bin');
 define('MD5FILENAME','xyws_files.md5');
-define('DUMPROOT',PROJECTROOT.DIRECTORY_SEPARATOR.'dumproot');
 $strDateTime = date('YmdHis');
 
 //定义需要cache的目录
-$arrCacheDir = array(SYSTEMROOT,WWWROOT,SERVERROOT);
+$arrCacheDir = array(COREROOT,SYSTEMROOT,WWWROOT,SERVERROOT);
 
 /* WWWROOT 缓存目录*/
 //array_push($arrCacheDir,WWWROOT.'controllers',WWWROOT.'helpers',WWWROOT.'hooks',WWWROOT.'languages',WWWROOT.'libraries',WWWROOT.'models');
@@ -52,7 +53,11 @@ $arrCacheFile = $arrCacheFileFailed = array();
 /* bin 目的目录检测*/
 if (!is_dir(APCBIN))
 {
-    exit(APCBIN.' is not directory!!!'.NEWLINE);
+    if(!mkdir(APCBIN,0777,true))
+    {
+        echo APCBIN,' can\'t to create!'.NEWLINE;
+        exit();
+    }
 }
 
 apc_clear_cache ('user'); //清空导出之前的缓存
@@ -79,11 +84,15 @@ foreach ($arrCacheFileFailed as $value)
 
 /* 清空被缓存文件*/
 
-if (replaceFile($strBinMd5))
-{
-    exit('Apc cache done!'.NEWLINE);
-}
+replaceFile($strBinMd5);
 
+/* 复制被过滤文件 */
+moveDropFile($arrDropFile);
+
+/* 复制被过滤目录 */
+moveDropDir($arrDropDir);
+
+exit('Apc cache done!'.NEWLINE);
 
 function compileDir ($dir)
 {
@@ -181,6 +190,59 @@ function replaceFile ($strBinMd5)
         fwrite($handle, $filemd5.' '.str_replace(PROJECTROOT, '*',$value)."\n");
     }
     fclose($handle);
+    return true;
+}
+
+function moveDropFile ($arrDropFile)
+{
+    foreach ($arrDropFile as $key => $value)
+    {
+        if (!copy($value,str_replace(PROJECTROOT,DUMPROOT,$value)))
+        {
+            echo 'file can\'t copy '.$value.NEWLINE;
+        }
+    }
+    return true;
+}
+
+
+function moveDropDir ($arrDropDir)
+{
+    foreach ($arrDropDir as $dir)
+    {
+        if ($handle = opendir($dir)) {
+            while (false !== ($file = readdir($handle))) {
+                if ($file != '.' && $file != '..')
+                {
+                    if (is_dir($dir.DIRECTORY_SEPARATOR.$file) && $file != '.svn')
+                    {
+                        moveDropDir(array($dir.DIRECTORY_SEPARATOR.$file));
+                    }
+                    elseif (is_file($dir.DIRECTORY_SEPARATOR.$file) && $file != '.svn')
+                    {
+                        $newDir = str_replace(PROJECTROOT,DUMPROOT,$dir.DIRECTORY_SEPARATOR.$dir);
+                        if (!is_dir($newDir))
+                        {
+                            if(!mkdir($newDir,0777,true))
+                            {
+                                echo $newDir,' can\'t to create!'.NEWLINE;
+                                exit();
+                            }
+                        }
+                        if (!copy($dir.DIRECTORY_SEPARATOR.$file,str_replace(PROJECTROOT,DUMPROOT,$dir.DIRECTORY_SEPARATOR.$file)))
+                        {
+                            echo 'file can\'t copy '.$value.NEWLINE;
+                        }
+                    }
+                }
+            }
+            closedir($handle);
+        }
+        else
+        {
+            exit('Can\'t to opendir '.$dir.NEWLINE);
+        }
+    }
     return true;
 }
 ?>
