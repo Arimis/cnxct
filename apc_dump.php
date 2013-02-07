@@ -2,9 +2,9 @@
 /*
  **  说明：此文件为apc导出文件，只需要在导出服存在。在生产服务器只需要bin文件，即可。
  **  需要保证导出服务器的web路径跟目标运行服务器的web路径一致
- **  导出：将此文件防项目路径的根目录下，执行此文件，出现“Apc cache done!”即视为成功，之后将dumproot目录下所有文件(多数已经被清空)复制到目标服务器。
- **  导入：在php.ini中新增apc.preload_binfile="/data/xyws.bin" 即可
- **  AUthor CFC4N cfc4n@cnxct.com $Id: apc_dump.php 2449 2012-11-23 05:16:41Z cfc4n $
+ **  导出：要确认 wwwroot同级目录下，存在bin目录，之后，执行此文件(放在tool目录下)，出现“Apc cache done!”即视为成功，之后将bin文件以及其他所有文件(多数已经被清空)复制到目标服务器。
+ **  导入：打过自动加载patch，在php.ini中新增apc.preload_binfile="/data/bin/xyws.bin" 即可
+ **  AUthor CFC4N cfc4n@cnxct.com $Id: apc_dump.php 2812 2013-02-07 07:07:29Z cfc4n $
  */
 if (php_sapi_name() == 'cli')
 {
@@ -14,7 +14,8 @@ else
 {
     define('NEWLINE','<br />');
 }
-define('PROJECTROOT',dirname(__FILE__));    //define('PROJECTROOT','/data/htdocs');
+//define('PROJECTROOT',dirname(__FILE__));
+define('PROJECTROOT','/data/htdocs');   //此处为项目路径，已经写死。可自行调整
 
 
 /* 定义项目主路径信息 */
@@ -31,20 +32,20 @@ $strDateTime = date('YmdHis');
 //定义需要cache的目录
 $arrCacheDir = array(COREROOT,SYSTEMROOT,WWWROOT,SERVERROOT);
 
-/* WWWROOT 缓存目录*/
-//array_push($arrCacheDir,WWWROOT.'controllers',WWWROOT.'helpers',WWWROOT.'hooks',WWWROOT.'languages',WWWROOT.'libraries',WWWROOT.'models');
-/* 框架缓存目录 */
-//array_push($arrCacheDir,SYSTEMROOT.'config',SYSTEMROOT.'database',SYSTEMROOT.'errors',SYSTEMROOT.'helpers',SYSTEMROOT.'kernel',SYSTEMROOT.'libraries');
-/* 后台守护进程 */
-//array_push($arrCacheDir,SERVERROOT.'daemon',SERVERROOT.'day',SERVERROOT.'helpers',SERVERROOT.'hour',SERVERROOT.'languages',SERVERROOT.'libraries',SERVERROOT.'minute',SERVERROOT.'models',SERVERROOT.'tools');
-
-
 /* 需要过滤的文件 */
-$arrDropFile = array(WWWROOT.DIRECTORY_SEPARATOR.'AmfConfig.php',WWWROOT.DIRECTORY_SEPARATOR.'ResConfig.php');
+$arrDropFile = array(__FILE__, WWWROOT.DIRECTORY_SEPARATOR.'AmfConfig.php',WWWROOT.DIRECTORY_SEPARATOR.'ResConfig.php');
 
 /* 需要过滤的目录 */
-$arrDropDir = array(WWWROOT.DIRECTORY_SEPARATOR.'config',WWWROOT.DIRECTORY_SEPARATOR.'views',WWWROOT.DIRECTORY_SEPARATOR.'tool',WWWROOT.DIRECTORY_SEPARATOR.'controllers'.DIRECTORY_SEPARATOR.'amfphp',SERVERROOT.DIRECTORY_SEPARATOR.'config');
+$arrDropDir = array(WWWROOT.DIRECTORY_SEPARATOR.'config',WWWROOT.DIRECTORY_SEPARATOR.'views',WWWROOT.DIRECTORY_SEPARATOR.'tool',WWWROOT.DIRECTORY_SEPARATOR.'controllers'.DIRECTORY_SEPARATOR.'amfphp',SERVERROOT.DIRECTORY_SEPARATOR.'config',SERVERROOT.DIRECTORY_SEPARATOR.'logs',SYSTEMROOT.DIRECTORY_SEPARATOR.'logs');
 
+/* 需要复制的文件 */
+$arrCopyFile = array(
+            WWWROOT.DIRECTORY_SEPARATOR.'crossdomain.xml',
+            WWWROOT.DIRECTORY_SEPARATOR.'cross_origin.htm',
+            SERVERROOT.DIRECTORY_SEPARATOR.'restart_task.sh',
+            SERVERROOT.DIRECTORY_SEPARATOR.'start_task.sh',
+            SERVERROOT.DIRECTORY_SEPARATOR.'stop_task.sh',
+            );
 
 
 /* 以下内容，请勿变更  */
@@ -88,6 +89,9 @@ replaceFile($strBinMd5);
 
 /* 复制被过滤文件 */
 moveDropFile($arrDropFile);
+
+/* 复制需要被复制文件 */
+moveDropFile($arrCopyFile);
 
 /* 复制被过滤目录 */
 moveDropDir($arrDropDir);
@@ -197,7 +201,7 @@ function moveDropFile ($arrDropFile)
 {
     foreach ($arrDropFile as $key => $value)
     {
-        if (!copy($value,str_replace(PROJECTROOT,DUMPROOT,$value)))
+        if (is_file($value) && !copy($value,str_replace(PROJECTROOT,DUMPROOT,$value)))
         {
             echo 'file can\'t copy '.$value.NEWLINE;
         }
@@ -210,7 +214,7 @@ function moveDropDir ($arrDropDir)
 {
     foreach ($arrDropDir as $dir)
     {
-        if ($handle = opendir($dir)) {
+        if (is_dir($dir) && false !== ($handle = opendir($dir))) {
             while (false !== ($file = readdir($handle))) {
                 if ($file != '.' && $file != '..')
                 {
@@ -240,7 +244,7 @@ function moveDropDir ($arrDropDir)
         }
         else
         {
-            exit('Can\'t to opendir '.$dir.NEWLINE);
+            echo 'Can\'t to opendir '.$dir,'. Maybe is not necessary.',NEWLINE;
         }
     }
     return true;
